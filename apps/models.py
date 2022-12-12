@@ -9,15 +9,48 @@ np.random.seed(0)
 
 class ResNet9(ndl.nn.Module):
     def __init__(self, device=None, dtype="float32"):
+        def BasicBlock(in_channels, out_channels, kernel_size, stride):
+            return nn.Sequential(
+                nn.Conv(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    device=device,
+                    dtype=dtype,
+                ),
+                nn.BatchNorm2d(dim=out_channels, device=device, dtype=dtype),
+                nn.ReLU(),
+            )
+
         super().__init__()
-        ### BEGIN YOUR SOLUTION ###
-        raise NotImplementedError() ###
-        ### END YOUR SOLUTION
+        self.features =  nn.Sequential(
+            BasicBlock(3, 16, 7, 4),
+            BasicBlock(16, 32, 3, 2),
+            nn.Residual(
+                nn.Sequential(
+                    BasicBlock(32, 32, 3, 1),
+                    BasicBlock(32, 32, 3, 1)
+                ),
+            ),
+            BasicBlock(32, 64, 3, 2),
+            BasicBlock(64, 128, 3, 2),
+            nn.Residual(
+                nn.Sequential(
+                    BasicBlock(128, 128, 3, 1),
+                    BasicBlock(128, 128, 3, 1)
+                ),
+            ),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(128, 128, device=device, dtype=dtype),
+            nn.ReLU(),
+            nn.Linear(128, 10, device=device, dtype=dtype),
+        )
 
     def forward(self, x):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        return self.classifier(self.features(x))
 
 
 class LanguageModel(nn.Module):
@@ -34,9 +67,28 @@ class LanguageModel(nn.Module):
         num_layers: Number of layers in RNN or LSTM
         """
         super(LanguageModel, self).__init__()
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+
+        self.embedding_size = embedding_size
+        self.output_size = output_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.seq_model = seq_model
+
+        PARAMS = dict(
+            device=device,
+            dtype=dtype,
+        )
+        self.embedding = nn.Embedding(output_size, embedding_size, **PARAMS)
+        if seq_model == "rnn":
+            self.model = nn.RNN(embedding_size, hidden_size, num_layers, **PARAMS)
+        elif seq_model == "lstm":
+            self.model = nn.LSTM(embedding_size, hidden_size, num_layers, **PARAMS)
+        else:
+            raise NotImplementedError(
+                f"Model {seq_model} is not supported. Use rnn or lstm instead."
+            )
+
+        self.fc = nn.Linear(hidden_size, output_size, **PARAMS)
 
     def forward(self, x, h=None):
         """
@@ -51,9 +103,10 @@ class LanguageModel(nn.Module):
         h of shape (num_layers, bs, hidden_size) if using RNN,
             else h is tuple of (h0, c0), each of shape (num_layers, bs, hidden_size)
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        out, h = self.model(self.embedding(x), h)
+        seq_len, bs, hidden_size = out.shape
+        out = self.fc(out.reshape((seq_len*bs, hidden_size)))
+        return out, h
 
 
 if __name__ == "__main__":

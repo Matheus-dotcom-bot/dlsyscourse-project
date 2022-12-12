@@ -99,9 +99,34 @@ def epoch_general_ptb(data, model, seq_len=40, loss_fn=nn.SoftmaxLoss(), opt=Non
         avg_loss: average loss over dataset
     """
     np.random.seed(4)
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+
+    if opt:
+        model.train()
+    else:
+        model.eval()
+
+    h = None
+    count = acc = loss = 0
+    nbatch, _ = data.shape
+    for i in range(0, nbatch - 1, seq_len):
+        X, y = ndl.data.get_batch(data, i, seq_len, device=device, dtype=dtype)
+        count += y.shape[0]
+
+        preds, h = model(X, h)
+        h = [hs.detach() for hs in h] if isinstance(h, tuple) else h.detach()
+        acc += np.sum(preds.numpy().argmax(-1) == y.numpy())
+
+        l = loss_fn(preds, y)
+        loss += l.numpy().squeeze() * y.shape[0]
+
+        if opt:
+            l.backward()
+            if clip:
+                opt.clip_grad_norm(clip)
+            opt.step()
+            opt.reset_grad()
+
+    return acc / count, loss / count
 
 
 def train_ptb(model, data, seq_len=40, n_epochs=1, optimizer=ndl.optim.SGD,
@@ -126,9 +151,17 @@ def train_ptb(model, data, seq_len=40, n_epochs=1, optimizer=ndl.optim.SGD,
         avg_loss: average loss over dataset from last epoch of training
     """
     np.random.seed(4)
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+
+    opt = optimizer(model.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_fn = loss_fn()
+
+    avg_acc = avg_loss = None
+    for _ in range(n_epochs):
+        avg_acc, avg_loss = epoch_general_ptb(
+            data, model, seq_len, loss_fn, opt, clip, device, dtype
+        )
+
+    return avg_acc, avg_loss
 
 
 def evaluate_ptb(model, data, seq_len=40, loss_fn=nn.SoftmaxLoss,
@@ -147,9 +180,7 @@ def evaluate_ptb(model, data, seq_len=40, loss_fn=nn.SoftmaxLoss,
         avg_loss: average loss over dataset
     """
     np.random.seed(4)
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+    return epoch_general_ptb(data, model, seq_len, loss_fn(), device=device, dtype=dtype)
 
 
 if __name__ == "__main__":

@@ -244,10 +244,14 @@ class NDArray:
         Returns:
             NDArray : reshaped array; this will point to thep
         """
+        if self.size != prod(new_shape):
+            raise ValueError(f"cannot reshape array of size {self.shape} into shape {new_shape}")
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        if not self.is_compact():
+            raise ValueError("cannot rashape sparse matrix")
+
+        return self.as_strided(new_shape, self.compact_strides(new_shape))
+
 
     def permute(self, new_axes):
         """
@@ -269,10 +273,9 @@ class NDArray:
             to the same memory as the original NDArray (i.e., just shape and
             strides changed).
         """
-
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        shape = tuple(self.shape[a] for a in new_axes)
+        strides = tuple(self.strides[a] for a in new_axes)
+        return self.as_strided(shape, strides)
 
     def broadcast_to(self, new_shape):
         """
@@ -293,9 +296,14 @@ class NDArray:
             NDArray: the new NDArray object with the new broadcast shape; should
             point to the same memory as the original array.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        if any(a != b and a != 1 for a, b in zip(self.shape, new_shape)):
+            raise ValueError(
+                f"operands could not be broadcast together with remapped "
+                f"shapes [original->remapped]: {self.shape} and requested "
+                f"shape {new_shape}"
+            )
+        strides = tuple(s * (d != 1) for s, d in zip(self.strides, self.shape))
+        return self.as_strided(new_shape, strides)
 
     ### Get and set elements
 
@@ -360,9 +368,16 @@ class NDArray:
         )
         assert len(idxs) == self.ndim, "Need indexes equal to number of dimensions"
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        shape = [(d := i.stop - i.start) // i.step + d % i.step for i in idxs]
+        strides = [i.step * stride for i, stride in zip(idxs, self.strides)]
+        offset = sum(i.start * stride for i, stride in zip(idxs, self.strides))
+        return NDArray.make(
+            tuple(shape),
+            strides=tuple(strides),
+            device=self.device,
+            handle=self._handle,
+            offset=offset
+        )
 
     def __setitem__(self, idxs, other):
         """Set the values of a view into an array, using the same semantics
@@ -571,21 +586,35 @@ class NDArray:
         Flip this ndarray along the specified axes.
         Note: compact() before returning.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        if isinstance(axes, int):
+            axes = axes,
+        return NDArray.make(
+            shape=self.shape,
+            strides=tuple(-stride if axis in axes else stride
+                          for axis, stride in enumerate(self.strides)),
+            device=self.device,
+            handle=self._handle,
+            offset=sum((self.shape[ax] - 1) * self.strides[ax] for ax in axes),
+        ).compact()
 
 
     def pad(self, axes):
         """
         Pad this ndarray by zeros by the specified amount in `axes`,
         which lists for _all_ axes the left and right padding amount, e.g.,
-        axes = ( (0, 0), (1, 1), (0, 0)) pads the middle axis with a 0 on the left and right side.
+        axes = ((0, 0), (1, 1), (0, 0)) pads the middle axis with a 0 on the
+        left and right side.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
-
+        ret = full(
+            shape=tuple(d + l + r for d, (l, r) in zip(self.shape, axes)),
+            fill_value=0,
+            dtype=self.dtype,
+            device=self.device,
+        )
+        slices = tuple(slice(left, left + dim if right else None)
+                       for dim, (left, right) in zip(self.shape, axes))
+        ret[slices] = self
+        return ret
 
 
 def array(a, dtype="float32", device=None):
@@ -634,3 +663,12 @@ def flip(a, axes):
 
 def summation(a, axis=None, keepdims=False):
     return a.sum(axis=axis, keepdims=keepdims)
+
+
+def permute(a, axes):
+    return a.permute(axes)
+
+
+def max(a, axis=None, keepdims=False):
+    return a.max(axis=axis, keepdims=keepdims)
+
