@@ -635,3 +635,151 @@ class Embedding(Module):
             dtype=self.dtype,
         )
         return (one_hot @ self.weight).reshape((seq_len, bs, self.embedding_dim))
+
+
+class GRUCell(Module):
+    def __init__(self, input_size, hidden_size, bias=True, device=None, dtype="float32"):
+        """
+        A gated recurrent unit (GRU) cell.
+
+        Parameters:
+        input_size - The number of expected features in the input X
+        hidden_size - The number of features in the hidden state h
+        bias - If False, then the layer does not use bias weights
+
+        Variables:
+        W_ih - The learnable input-hidden weights, of shape (input_size, 3*hidden_size).
+        W_hh - The learnable hidden-hidden weights, of shape (hidden_size, 3*hidden_size).
+        bias_ih - The learnable input-hidden bias, of shape (3*hidden_size,).
+        bias_hh - The learnable hidden-hidden bias, of shape (3*hidden_size,).
+
+        Weights and biases are initialized from U(-sqrt(k), sqrt(k)) where k = 1/hidden_size
+        """
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.bias = bias
+        self.device = device
+        self.dtype = dtype
+
+        PARAMS = dict(
+            fan_in=6 * hidden_size,
+            fan_out=None,
+            device=device,
+            dtype=dtype,
+            requires_grad=True,
+        )
+
+        shape = input_size, 3 * hidden_size
+        self.W_ih = Parameter(init.kaiming_uniform(shape=shape, **PARAMS))
+
+        shape = hidden_size, 3 * hidden_size
+        self.W_hh = Parameter(init.kaiming_uniform(shape=shape, **PARAMS))
+
+        shape = 3 * hidden_size,
+        self.bias_ih = Parameter(init.kaiming_uniform(shape=shape, **PARAMS))
+        self.bias_hh = Parameter(init.kaiming_uniform(shape=shape, **PARAMS))
+
+    def forward(self, X, h=None):
+        """
+        Inputs:
+        X of shape (bs, input_size): Tensor containing input features
+        h of shape (bs, hidden_size): Tensor containing the initial hidden state
+            for each element in the batch. Defaults to zero if not provided.
+
+        Outputs:
+        h' of shape (bs, hidden_size): Tensor contianing the next hidden state
+            for each element in the batch.
+        """
+        # r = σ(W_ir @ x + b_ir + W_hr * h + b_hr)
+        # z = σ(W_iz @ x + b_iz + W_hz * h + b_hz)
+        # n = tanh(W_in * x + b_in + r * (Whn * h + bhn))
+        # h' = (1 - z) * n + z * h
+        # https://pytorch.org/docs/stable/generated/torch.nn.GRUCell.html
+        bs, _ = X.shape
+        shape = bs, self.hidden_size
+        h = h or init.zeros(*shape, device=self.device, dtype=self.dtype)
+
+        X_new = X @ self.W_ih
+        h_new = h @ self.W_hh
+        if self.bias:
+            add_dim = 1, 3 * self.hidden_size
+            shape = bs, 3 * self.hidden_size
+            X_new += self.bias_ih.reshape(add_dim).broadcast_to(shape)
+            h_new += self.bias_hh.reshape(add_dim).broadcast_to(shape)
+
+        rx, zx, xn = ops.split(X_new.reshape((bs, 3, self.hidden_size)), axis=1)
+        rh, zh, nh = ops.split(h_new.reshape((bs, 3, self.hidden_size)), axis=1)
+
+        r = Sigmoid()(rx + rh)
+        z = Sigmoid()(zx + zh)
+        n = Tanh()(xn + r * nh)
+
+        h_out = (1 - z) * n + z * h
+        return h_out
+
+
+class GRU(Module):
+    def __init__(self, input_size, hidden_size, num_layers=1, bias=True, device=None, dtype="float32"):
+        """
+        Applies a multi-layer gated recurrent unit (GRU) RNN to an input sequence.
+
+        Parameters:
+        input_size - The number of expected features in the input x
+        hidden_size - The number of features in the hidden state h
+        num_layers - Number of recurrent layers.
+        bias - If False, then the layer does not use bias weights.
+
+        Variables:
+        gru_cells[k].W_ih: The learnable input-hidden weights of the k-th layer,
+            of shape (input_size, 3*hidden_size) for k=0. Otherwise the shape is
+            (hidden_size, 3*hidden_size).
+        gru_cells[k].W_hh: The learnable hidden-hidden weights of the k-th layer,
+            of shape (hidden_size, 3*hidden_size).
+        gru_cells[k].bias_ih: The learnable input-hidden bias of the k-th layer,
+            of shape (3*hidden_size,).
+        gru_cells[k].bias_hh: The learnable hidden-hidden bias of the k-th layer,
+            of shape (3*hidden_size,).
+        """
+        def gru_cell(input_size):
+            return GRUCell(input_size, hidden_size, bias, device, dtype)
+
+        super().__init__()
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bias = bias
+        self.device = device
+        self.dtype = dtype
+
+        self.gru_cells = [gru_cell(input_size)] + [gru_cell(hidden_size) for _ in range(num_layers - 1)]
+
+    def forward(self, X, h0=None):
+        """
+        Inputs:
+        X of shape (seq_len, bs, input_size) containing the features of the
+            input sequence.
+        h_0 of shape (num_layers, bs, hidden_size) containing the initial
+            hidden state for each element in the batch. Defaults to zeros
+            if not provided.
+
+        Outputs
+        output of shape (seq_len, bs, hidden_size) containing the output
+            features (h_t) from the last layer of the GRU, for each t.
+        h_n of shape (num_layers, bs, hidden_size) containing the final hidden
+            state for each element in the batch.
+        """
+        _, bs, _ = X.shape
+        shape = self.num_layers, bs, self.hidden_size
+        h0 = h0 or init.zeros(*shape, device=self.device, dtype=self.dtype)
+
+        X_new = ops.split(X, axis=0)
+        h_n = []
+        for gru_cell, h in zip(self.gru_cells, ops.split(h0, axis=0)):
+            X_new = [(h := gru_cell(X_t, h)) for X_t in X_new]
+            h_n.append(h)
+
+        output = ops.stack(X_new, axis=0)
+        h_n = ops.stack(h_n, axis=0)
+        return output, h_n
