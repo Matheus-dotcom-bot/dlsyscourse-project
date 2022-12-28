@@ -708,12 +708,12 @@ class GRUCell(Module):
             X_new += self.bias_ih.reshape(add_dim).broadcast_to(shape)
             h_new += self.bias_hh.reshape(add_dim).broadcast_to(shape)
 
-        rx, zx, xn = ops.split(X_new.reshape((bs, 3, self.hidden_size)), axis=1)
-        rh, zh, nh = ops.split(h_new.reshape((bs, 3, self.hidden_size)), axis=1)
+        xr, xz, xn = ops.split(X_new.reshape((bs, 3, self.hidden_size)), axis=1)
+        hr, hz, hn = ops.split(h_new.reshape((bs, 3, self.hidden_size)), axis=1)
 
-        r = Sigmoid()(rx + rh)
-        z = Sigmoid()(zx + zh)
-        n = Tanh()(xn + r * nh)
+        r = Sigmoid()(hr + xr)  # reset gates
+        z = Sigmoid()(hz + xz)  # update gates
+        n = Tanh()(r * hn + xn)  # new gates (candidate for replacing h)
 
         h_out = (1 - z) * n + z * h
         return h_out
