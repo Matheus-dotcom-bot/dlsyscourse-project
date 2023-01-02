@@ -155,11 +155,13 @@ def train_ptb(model, data, seq_len=40, n_epochs=1, optimizer=ndl.optim.SGD,
     opt = optimizer(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = loss_fn()
 
-    avg_acc = avg_loss = None
+    avg_acc = avg_loss = 0
     for _ in range(n_epochs):
-        avg_acc, avg_loss = epoch_general_ptb(
+        acc, loss = epoch_general_ptb(
             data, model, seq_len, loss_fn, opt, clip, device, dtype
         )
+        avg_acc += acc / n_epochs
+        avg_loss += loss / n_epochs
 
     return avg_acc, avg_loss
 
