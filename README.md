@@ -1,2 +1,2 @@
-# Homework 4
-Public repository and stub/testing code for Homework 4 of 10-714.
+# Final Project for 10-414/714: Deep Learning Systems (online class)
+For more details please watch the [video presentation](https://youtu.be/0ZCG0Lg8W2o) and read the [final report](final_report.ipynb)
